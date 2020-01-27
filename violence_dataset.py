@@ -25,18 +25,30 @@ def video_to_tensor(pic):
     return torch.from_numpy(pic.transpose([3,0,1,2]))
 
 
-def load_rgb_frames(image_dir, vid, start, num):
-  frames = []
-  for i in range(start, start+num):
-    img = cv2.imread(os.path.join(image_dir, vid, vid+'-'+str(i).zfill(6)+'.jpg'))[:, :, [2, 1, 0]]
-    w,h,c = img.shape
-    if w < 226 or h < 226:
-        d = 226.-min(w,h)
-        sc = 1+d/min(w,h)
-        img = cv2.resize(img,dsize=(0,0),fx=sc,fy=sc)
-    img = (img/255.)*2 - 1
-    frames.append(img)
-  return np.asarray(frames, dtype=np.float32)
+def load_rgb_frames(root, vid, start, num):
+    frames = []
+    cap = cv2.VideoCapture(os.path.join(root, vid))
+
+    while(cap.isOpened()):
+        # Capture frame-by-frame
+        ret, frame = cap.read()
+        if not ret:
+            break
+        w,h,c = frame.shape
+        if w < 226 or h < 226:
+            d = 226.-min(w,h)
+            sc = 1+d/min(w,h)
+            frame = cv2.resize(frame,dsize=(0,0),fx=sc,fy=sc)
+        frame = (frame/255.)*2 - 1
+        frames.append(frame)
+
+    # When everything done, release the capture
+    cap.release()
+    cv2.destroyAllWindows()
+    if len(frames) < 64:
+        frames += [frames[-i] for i in range(len(frames))]
+    start = int((len(frames)-64)*start)
+    return np.asarray(frames[start:start+64], dtype=np.float32)
 
 def load_flow_frames(image_dir, vid, start, num):
   frames = []
@@ -58,44 +70,26 @@ def load_flow_frames(image_dir, vid, start, num):
   return np.asarray(frames, dtype=np.float32)
 
 
-def make_dataset(split_file, split, root, mode, num_classes=157):
+def make_dataset(root, split):
     dataset = []
-    with open(split_file, 'r') as f:
-        data = json.load(f)
+    with open(os.path.join(root, split), 'r') as f:
+        data = [line.split('\t')[0] for line in f]
 
-    i = 0
-    for vid in data.keys():
-        if data[vid]['subset'] != split:
-            continue
-
+    for vid in data:
         if not os.path.exists(os.path.join(root, vid)):
             continue
-        num_frames = len(os.listdir(os.path.join(root, vid)))
-        if mode == 'flow':
-            num_frames = num_frames//2
             
-        if num_frames < 66:
-            continue
-
-        label = np.zeros((num_classes,num_frames), np.float32)
-
-        fps = num_frames/data[vid]['duration']
-        for ann in data[vid]['actions']:
-            for fr in range(0,num_frames,1):
-                if fr/fps > ann[1] and fr/fps < ann[2]:
-                    label[ann[0], fr] = 1 # binary classification
-        dataset.append((vid, label, data[vid]['duration'], num_frames))
-        i += 1
+        label = 0 if 'noFights' in vid else 1
+        dataset.append((vid, label))
     
     return dataset
 
 
-class Charades(data_utl.Dataset):
+class ViolenceDetection(data_utl.Dataset):
 
-    def __init__(self, split_file, split, root, mode, transforms=None):
+    def __init__(self, root, split, mode, transforms=None):
         
-        self.data = make_dataset(split_file, split, root, mode)
-        self.split_file = split_file
+        self.data = make_dataset(root, split)
         self.transforms = transforms
         self.mode = mode
         self.root = root
@@ -108,14 +102,14 @@ class Charades(data_utl.Dataset):
         Returns:
             tuple: (image, target) where target is class_index of the target class.
         """
-        vid, label, dur, nf = self.data[index]
-        start_f = random.randint(1,nf-65)
+        vid, label = self.data[index]
+        start_f = random.random()
 
         if self.mode == 'rgb':
             imgs = load_rgb_frames(self.root, vid, start_f, 64)
         else:
             imgs = load_flow_frames(self.root, vid, start_f, 64)
-        label = label[:, start_f:start_f+64]
+        label = np.tile(label, (1, 64)).astype(np.float32)
 
         imgs = self.transforms(imgs)
 
@@ -123,3 +117,21 @@ class Charades(data_utl.Dataset):
 
     def __len__(self):
         return len(self.data)
+
+    
+class VSD2014YouTube(ViolenceDetection):
+
+    def __init__(self, root, mode, transforms=None):
+        self.root = root
+        self.data = self.list_dataset()
+        self.transforms = transforms
+        self.mode = mode
+        
+    def list_dataset(self):
+        dataset = []
+        for file in os.listdir(os.path.join(self.root, 'violence')):
+            dataset.append((os.path.join('violence', file), 1))
+        for file in os.listdir(os.path.join(self.root, 'no-violence')):
+            dataset.append((os.path.join('no-violence', file), 0))
+        random.shuffle(dataset)
+        return dataset
