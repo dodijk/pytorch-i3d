@@ -16,7 +16,7 @@ def video_to_tensor(pic):
     """Convert a ``numpy.ndarray`` to tensor.
     Converts a numpy.ndarray (T x H x W x C)
     to a torch.FloatTensor of shape (C x T x H x W)
-    
+
     Args:
          pic (numpy.ndarray): Video to be converted to tensor.
     Returns:
@@ -55,14 +55,14 @@ def load_flow_frames(image_dir, vid, start, num):
   for i in range(start, start+num):
     imgx = cv2.imread(os.path.join(image_dir, vid, vid+'-'+str(i).zfill(6)+'x.jpg'), cv2.IMREAD_GRAYSCALE)
     imgy = cv2.imread(os.path.join(image_dir, vid, vid+'-'+str(i).zfill(6)+'y.jpg'), cv2.IMREAD_GRAYSCALE)
-    
+
     w,h = imgx.shape
     if w < 224 or h < 224:
         d = 224.-min(w,h)
         sc = 1+d/min(w,h)
         imgx = cv2.resize(imgx,dsize=(0,0),fx=sc,fy=sc)
         imgy = cv2.resize(imgy,dsize=(0,0),fx=sc,fy=sc)
-        
+
     imgx = (imgx/255.)*2 - 1
     imgy = (imgy/255.)*2 - 1
     img = np.asarray([imgx, imgy]).transpose([1,2,0])
@@ -78,21 +78,22 @@ def make_dataset(root, split):
     for vid in data:
         if not os.path.exists(os.path.join(root, vid)):
             continue
-            
+
         label = 0 if 'noFights' in vid else 1
         dataset.append((vid, label))
-    
+
     return dataset
 
 
 class ViolenceDetection(data_utl.Dataset):
 
-    def __init__(self, root, split, mode, transforms=None):
-        
+    def __init__(self, root, split, mode, transforms=None, start=None):
+
         self.data = make_dataset(root, split)
         self.transforms = transforms
         self.mode = mode
         self.root = root
+        self.start = start
 
     def __getitem__(self, index):
         """
@@ -103,7 +104,7 @@ class ViolenceDetection(data_utl.Dataset):
             tuple: (image, target) where target is class_index of the target class.
         """
         vid, label = self.data[index]
-        start_f = random.random()
+        start_f = self.start or random.random()
 
         if self.mode == 'rgb':
             imgs = load_rgb_frames(self.root, vid, start_f, 64)
@@ -118,15 +119,16 @@ class ViolenceDetection(data_utl.Dataset):
     def __len__(self):
         return len(self.data)
 
-    
+
 class VSD2014YouTube(ViolenceDetection):
 
-    def __init__(self, root, mode, transforms=None):
+    def __init__(self, root, mode, transforms=None, start=None):
         self.root = root
         self.data = self.list_dataset()
         self.transforms = transforms
         self.mode = mode
-        
+        self.start = start
+
     def list_dataset(self):
         dataset = []
         for file in os.listdir(os.path.join(self.root, 'violence')):
